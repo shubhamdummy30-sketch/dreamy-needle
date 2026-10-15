@@ -14,5 +14,8 @@
     "custom-embroidery"
   ],
   "author": "Shruti",
-  "license": "ISC"
+  "license": "ISC",
+  "dependencies": {
+    "ioredis": "^6.0.0"
+  }
 }

@@ -1,6 +1,40 @@
 const fs = require('fs');
 const path = require('path');
 
+let Redis = null;
+try {
+  Redis = require('ioredis');
+} catch (e) {
+  Redis = null;
+}
+
+let redisClient = null;
+
+function getRedisClient() {
+  const redisUrl = process.env.REDIS_URL || process.env.UPSTASH_REDIS_URL;
+  if (!redisUrl || !Redis) return null;
+
+  if (!redisClient) {
+    try {
+      const isSsl = redisUrl.startsWith('rediss://');
+      redisClient = new Redis(redisUrl, {
+        connectTimeout: 5000,
+        maxRetriesPerRequest: 1,
+        lazyConnect: true,
+        enableAutoPipelining: true,
+        tls: isSsl ? { rejectUnauthorized: false } : undefined
+      });
+      redisClient.on('error', (err) => {
+        console.warn('ioredis background error:', err.message);
+      });
+    } catch (e) {
+      console.warn('Failed to initialize ioredis client:', e.message);
+      return null;
+    }
+  }
+  return redisClient;
+}
+
 function getKvCredentials() {
   let url = process.env.KV_REST_API_URL ||
             process.env.UPSTASH_REDIS_REST_URL ||
@@ -10,25 +44,6 @@ function getKvCredentials() {
               process.env.UPSTASH_REDIS_REST_TOKEN ||
               process.env.UPSTASH_REST_API_TOKEN;
 
-  // Fallback 1: check REDIS_URL or UPSTASH_REDIS_URL connection string
-  const rawRedisUrl = process.env.REDIS_URL || process.env.UPSTASH_REDIS_URL;
-  if ((!url || !token) && rawRedisUrl) {
-    if (rawRedisUrl.startsWith('http')) {
-      url = url || rawRedisUrl;
-    } else if (rawRedisUrl.startsWith('redis://') || rawRedisUrl.startsWith('rediss://')) {
-      try {
-        const parsedUrl = new URL(rawRedisUrl);
-        if (!url && parsedUrl.hostname) {
-          url = `https://${parsedUrl.hostname}`;
-        }
-        if (!token && parsedUrl.password) {
-          token = parsedUrl.password;
-        }
-      } catch (e) {}
-    }
-  }
-
-  // Fallback 2: dynamically scan all process.env
   if (!url || !token) {
     for (const [key, val] of Object.entries(process.env)) {
       if (typeof val !== 'string') continue;
@@ -38,17 +53,9 @@ function getKvCredentials() {
       if (!token && (key.includes('TOKEN') || key.includes('SECRET')) && (key.includes('REDIS') || key.includes('KV') || key.includes('UPSTASH'))) {
         token = val;
       }
-      if ((!url || !token) && (val.startsWith('redis://') || val.startsWith('rediss://'))) {
-        try {
-          const parsed = new URL(val);
-          if (!url && parsed.hostname) url = `https://${parsed.hostname}`;
-          if (!token && parsed.password) token = parsed.password;
-        } catch (e) {}
-      }
     }
   }
 
-  // Ensure url is valid HTTP/HTTPS
   if (url && !url.startsWith('http')) {
     url = null;
   }
@@ -57,9 +64,23 @@ function getKvCredentials() {
 }
 
 async function getStoredReviews(fallbackFile) {
-  const { url, token } = getKvCredentials();
+  // Method 1: TCP Redis (Redis Cloud / Redis URL)
+  const client = getRedisClient();
+  if (client) {
+    try {
+      if (client.status === 'wait') await client.connect();
+      const raw = await client.get('dreamy_needle_reviews');
+      if (raw) {
+        const parsed = JSON.parse(raw);
+        if (Array.isArray(parsed)) return parsed;
+      }
+    } catch (err) {
+      console.warn('Redis TCP read error:', err.message);
+    }
+  }
 
-  // If cloud database is configured in Vercel, fetch from cloud
+  // Method 2: Upstash REST API / Vercel KV
+  const { url, token } = getKvCredentials();
   if (url && token) {
     try {
       const res = await fetch(url, {
@@ -79,11 +100,11 @@ async function getStoredReviews(fallbackFile) {
         }
       }
     } catch (err) {
-      console.warn('Cloud KV read error, falling back to local reviews.json', err);
+      console.warn('Cloud KV read error:', err.message);
     }
   }
 
-  // Fallback to local reviews.json bundled with the deployment
+  // Method 3: Fallback to local reviews.json bundled with deployment
   try {
     if (fs.existsSync(fallbackFile)) {
       const data = fs.readFileSync(fallbackFile, 'utf8');
@@ -95,9 +116,22 @@ async function getStoredReviews(fallbackFile) {
 }
 
 async function saveReviews(reviews, fallbackFile) {
-  const { url, token } = getKvCredentials();
+  let saved = false;
 
-  // If cloud database is configured, persist to cloud
+  // Method 1: TCP Redis (Redis Cloud / Redis URL)
+  const client = getRedisClient();
+  if (client) {
+    try {
+      if (client.status === 'wait') await client.connect();
+      await client.set('dreamy_needle_reviews', JSON.stringify(reviews));
+      saved = true;
+    } catch (err) {
+      console.warn('Redis TCP write error:', err.message);
+    }
+  }
+
+  // Method 2: Upstash REST API / Vercel KV
+  const { url, token } = getKvCredentials();
   if (url && token) {
     try {
       const res = await fetch(url, {
@@ -108,20 +142,19 @@ async function saveReviews(reviews, fallbackFile) {
         },
         body: JSON.stringify(['SET', 'dreamy_needle_reviews', JSON.stringify(reviews)])
       });
-      if (res.ok) return true;
+      if (res.ok) saved = true;
     } catch (err) {
-      console.warn('Cloud KV write error:', err);
+      console.warn('Cloud KV write error:', err.message);
     }
   }
 
-  // If local server (writeable disk), write to disk
+  // Fallback: Local file
   try {
     fs.writeFileSync(fallbackFile, JSON.stringify(reviews, null, 2), 'utf8');
-    return true;
-  } catch (e) {
-    // Read-only filesystem on serverless without cloud database
-    return false;
-  }
+    saved = true;
+  } catch (e) {}
+
+  return saved;
 }
 
 module.exports = async (req, res) => {
@@ -135,20 +168,28 @@ module.exports = async (req, res) => {
 
   const reviewsFilePath = path.join(process.cwd(), 'reviews.json');
 
-  // Diagnostic check
+  // Diagnostic check: GET /api/reviews?check=1
   if (req.method === 'GET' && (req.url.includes('check=1') || req.url.includes('status=1'))) {
     const creds = getKvCredentials();
     const detected = Object.keys(process.env).filter(k => k.includes('REDIS') || k.includes('KV') || k.includes('UPSTASH'));
-    let errCause = null;
-    let testedHost = null;
-    let kvPing = null;
-    let kvError = null;
+    let pingResult = null;
+    let pingError = null;
+    let connectionType = 'none';
 
-    try {
-      if (creds.url) testedHost = new URL(creds.url).host;
-    } catch (e) {}
+    // 1. Test TCP Redis client
+    const client = getRedisClient();
+    if (client) {
+      try {
+        if (client.status === 'wait') await client.connect();
+        pingResult = await client.ping();
+        connectionType = 'tcp-redis (Redis Cloud)';
+      } catch (err) {
+        pingError = 'TCP: ' + err.message;
+      }
+    }
 
-    if (creds.url && creds.token) {
+    // 2. Test Upstash REST if TCP didn't succeed
+    if (!pingResult && creds.url && creds.token) {
       try {
         const pingRes = await fetch(creds.url, {
           method: 'POST',
@@ -159,20 +200,19 @@ module.exports = async (req, res) => {
           body: JSON.stringify(['PING'])
         });
         const pingData = await pingRes.json();
-        kvPing = pingData.result || pingData;
+        pingResult = pingData.result || pingData;
+        connectionType = 'rest-kv (Upstash)';
       } catch (err) {
-        kvError = err.message;
-        errCause = err.cause ? (err.cause.message || String(err.cause)) : null;
+        pingError = (pingError ? pingError + ' | ' : '') + 'REST: ' + err.message;
       }
     }
 
     return res.status(200).json({
       status: 'active',
-      databaseConnected: Boolean(creds.url && creds.token),
-      testedHost,
-      kvPing,
-      kvError,
-      kvErrorCause: errCause,
+      databaseConnected: Boolean(pingResult === 'PONG' || pingResult === 'OK'),
+      connectionType,
+      ping: pingResult,
+      error: pingError,
       detectedEnvVars: detected
     });
   }
