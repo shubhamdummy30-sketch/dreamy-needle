@@ -141,6 +141,8 @@ module.exports = async (req, res) => {
     const detected = Object.keys(process.env).filter(k => k.includes('REDIS') || k.includes('KV') || k.includes('UPSTASH'));
     let errCause = null;
     let testedHost = null;
+    let kvPing = null;
+    let kvError = null;
 
     try {
       if (creds.url) testedHost = new URL(creds.url).host;
