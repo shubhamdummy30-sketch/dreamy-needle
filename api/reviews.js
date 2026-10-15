@@ -139,8 +139,12 @@ module.exports = async (req, res) => {
   if (req.method === 'GET' && (req.url.includes('check=1') || req.url.includes('status=1'))) {
     const creds = getKvCredentials();
     const detected = Object.keys(process.env).filter(k => k.includes('REDIS') || k.includes('KV') || k.includes('UPSTASH'));
-    let kvPing = null;
-    let kvError = null;
+    let errCause = null;
+    let testedHost = null;
+
+    try {
+      if (creds.url) testedHost = new URL(creds.url).host;
+    } catch (e) {}
 
     if (creds.url && creds.token) {
       try {
@@ -156,14 +160,17 @@ module.exports = async (req, res) => {
         kvPing = pingData.result || pingData;
       } catch (err) {
         kvError = err.message;
+        errCause = err.cause ? (err.cause.message || String(err.cause)) : null;
       }
     }
 
     return res.status(200).json({
       status: 'active',
       databaseConnected: Boolean(creds.url && creds.token),
+      testedHost,
       kvPing,
       kvError,
+      kvErrorCause: errCause,
       detectedEnvVars: detected
     });
   }
