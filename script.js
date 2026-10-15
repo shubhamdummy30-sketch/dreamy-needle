@@ -7,13 +7,6 @@
 document.addEventListener('DOMContentLoaded', () => {
   const reduceMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
 
-  // Clear any legacy test reviews from prior local testing sessions
-  try {
-    const rawLocal = localStorage.getItem('dreamy_needle_reviews');
-    if (rawLocal && (rawLocal.includes('Shubham') || rawLocal.includes('very nice') || rawLocal.includes('Aarav'))) {
-      localStorage.removeItem('dreamy_needle_reviews');
-    }
-  } catch (e) {}
 
   /* -------------------------------------------------------------
      1. Scroll Reveal with IntersectionObserver
@@ -469,7 +462,7 @@ document.addEventListener('DOMContentLoaded', () => {
         toast.className = 'fixed bottom-6 left-1/2 -translate-x-1/2 bg-[#201a16] text-white text-xs sm:text-sm font-semibold px-5 py-3 rounded-xl shadow-2xl z-50 flex items-center gap-3 border border-stone-700/80';
         toast.innerHTML = `
           <span class="material-symbols-outlined text-[#34d399] text-[20px]">check_circle</span>
-          <span>Thank you, <strong>${name}</strong>! Your review has been shared with the studio.</span>
+          <span>Thank you, <strong>${name}</strong>! Your review has been submitted successfully.</span>
         `;
         document.body.appendChild(toast);
         setTimeout(() => toast.remove(), 4500);
@@ -481,11 +474,11 @@ document.addEventListener('DOMContentLoaded', () => {
 
       if (window.location.protocol.startsWith('http')) {
         try {
-          const res = await fetch('/api/reviews', { cache: 'no-cache' });
+          const res = await fetch('/api/reviews?t=' + Date.now(), { cache: 'no-cache' });
           if (res.ok) {
             reviews = await res.json();
           } else {
-            const fileRes = await fetch('reviews.json', { cache: 'no-cache' });
+            const fileRes = await fetch('reviews.json?t=' + Date.now(), { cache: 'no-cache' });
             if (fileRes.ok) reviews = await fileRes.json();
           }
           // Synchronize local cache with server data so deleted reviews do not linger
@@ -502,12 +495,7 @@ document.addEventListener('DOMContentLoaded', () => {
       } else {
         try {
           const raw = localStorage.getItem('dreamy_needle_reviews');
-          if (raw && !raw.includes('Shubham') && !raw.includes('very nice') && !raw.includes('Aarav')) {
-            reviews = JSON.parse(raw);
-          } else {
-            reviews = [];
-            localStorage.removeItem('dreamy_needle_reviews');
-          }
+          reviews = raw ? JSON.parse(raw) : [];
         } catch (err) {
           reviews = [];
         }

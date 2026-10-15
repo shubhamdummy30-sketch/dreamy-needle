@@ -63,36 +63,32 @@ npx vercel
 
 ---
 
----
+## 💬 Live Cloud Reviews (Approach B — Vercel KV)
 
-## 💬 Studio Reviews Management (Pure File-Based, No Database Needed)
+To enable live, public review submissions stored across all visitors globally:
 
-Reviews are stored directly in `reviews.json` and served automatically by the Vercel serverless API.
+1. In your **[Vercel Dashboard](https://vercel.com/dashboard)**, open the `dreamy-needle` project.
+2. Go to the **Storage** tab.
+3. Click **Create Database** → Select **KV** (Free tier).
+4. Click **Connect to Project**.
 
-### How to Manage Reviews
+The `/api/reviews` endpoint automatically connects to Vercel KV with zero code modifications.
 
-You can manage all reviews directly from your terminal using `manage-reviews.js`:
+### Managing & Deleting Reviews
 
+#### On Live Vercel:
 ```bash
-# 1. View all reviews
+# View all reviews live in the cloud
+node manage-reviews.js live-list https://your-site.vercel.app
+
+# Delete a specific review from the live site
+node manage-reviews.js live-delete https://your-site.vercel.app <review_id> [admin_secret]
+```
+
+#### On Local Machine:
+```bash
 node manage-reviews.js list
-
-# 2. Add an authentic client review
-node manage-reviews.js add "Client Name" "City" "Item Embroidered" 5 "Review text..."
-
-# 3. Delete a review by ID
 node manage-reviews.js delete <review_id>
-
-# 4. Clear all reviews
 node manage-reviews.js clear
 ```
-
-### Publishing Updates to Your Live Website
-
-Whenever you add, edit, or delete reviews:
-```bash
-git commit -am "Update studio reviews"
-git push origin main
-```
-Vercel automatically redeploys within seconds, and all visitors globally will immediately see the updated reviews.
 
