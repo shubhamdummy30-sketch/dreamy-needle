@@ -403,13 +403,21 @@ document.addEventListener('DOMContentLoaded', () => {
 
         if (!text) return;
 
+        const now = Date.now();
+        const formattedDate = new Date(now).toLocaleDateString('en-IN', {
+          day: 'numeric',
+          month: 'short',
+          year: 'numeric'
+        });
+
         const newReview = {
-          id: Date.now(),
+          id: now,
+          createdAt: now,
           name: name,
           city: city,
           item: item,
           rating: selectedRating,
-          date: 'Just now',
+          date: formattedDate,
           text: text,
           isUserGenerated: true
         };
@@ -532,6 +540,37 @@ document.addEventListener('DOMContentLoaded', () => {
           return;
         }
 
+        function formatReviewDate(review) {
+          if (!review) return 'Verified Customer';
+
+          const timestamp = Number(review.createdAt || review.id);
+          if (!isNaN(timestamp) && timestamp > 1600000000000) {
+            const diffMs = Date.now() - timestamp;
+            const diffSec = Math.max(0, Math.floor(diffMs / 1000));
+            const diffMin = Math.floor(diffSec / 60);
+            const diffHours = Math.floor(diffMin / 60);
+            const diffDays = Math.floor(diffHours / 24);
+
+            if (diffMin < 2) return 'Just now';
+            if (diffMin < 60) return `${diffMin} min${diffMin > 1 ? 's' : ''} ago`;
+            if (diffHours < 24) return `${diffHours} hour${diffHours > 1 ? 's' : ''} ago`;
+            if (diffDays === 1) return 'Yesterday';
+            if (diffDays < 7) return `${diffDays} days ago`;
+
+            return new Date(timestamp).toLocaleDateString('en-IN', {
+              day: 'numeric',
+              month: 'short',
+              year: 'numeric'
+            });
+          }
+
+          if (review.date && review.date !== 'Just now') {
+            return review.date;
+          }
+
+          return 'Verified Client';
+        }
+
         reviews.forEach(r => {
           const card = document.createElement('div');
           const isHighlight = highlightId && (r.id === highlightId);
@@ -546,7 +585,7 @@ document.addEventListener('DOMContentLoaded', () => {
             <div>
               <div class="flex items-center justify-between mb-2">
                 <div class="flex items-center gap-1">${starsHtml}</div>
-                <span class="text-[11px] font-semibold text-stone-400">${r.date || 'Verified Customer'}</span>
+                <span class="text-[11px] font-semibold text-stone-400">${formatReviewDate(r)}</span>
               </div>
               <p class="text-sm text-stone-700 leading-relaxed font-normal">"${r.text}"</p>
             </div>

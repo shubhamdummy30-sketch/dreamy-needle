@@ -225,6 +225,16 @@ module.exports = async (req, res) => {
   if (req.method === 'POST') {
     try {
       const newReview = typeof req.body === 'string' ? JSON.parse(req.body) : (req.body || {});
+      const now = Date.now();
+      newReview.id = newReview.id || now;
+      newReview.createdAt = newReview.createdAt || now;
+      if (!newReview.date || newReview.date === 'Just now') {
+        newReview.date = new Date(newReview.createdAt).toLocaleDateString('en-IN', {
+          day: 'numeric',
+          month: 'short',
+          year: 'numeric'
+        });
+      }
       const currentReviews = await getStoredReviews(reviewsFilePath);
       currentReviews.unshift(newReview);
       await saveReviews(currentReviews, reviewsFilePath);
